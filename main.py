@@ -1,14 +1,10 @@
 from state_manager import load_game_state, save_game_state
-from ai_interactions import generate_description, initialize_game_state, generate_npc_response
+from ai_interactions import generate_description, initialize_game_state, generate_npc_response, generate_image_with_deepai
 import random
 import matplotlib.pyplot as plt
 import networkx as nx
 
 def check_quest_completion():
-    """
-    Dynamically checks and updates the status of all active quests
-    based on the player's inventory and defeated NPCs.
-    """
     for quest_name, quest_data in game_state["quests"].items():
         if not quest_data.get("completed"):
             for item in game_state["player"]["inventory"]:
@@ -17,7 +13,7 @@ def check_quest_completion():
                     print(f"Quest completed: {quest_data['description']}!")
                     break
 
-            for location_data in game_state["locations"].items():
+            for location_data in game_state["locations"].values():
                 npcs = location_data.get("npcs", {})
                 for npc_name, npc_data in npcs.items():
                     if npc_name in quest_name and npc_data.get("status") == "defeated":
@@ -120,20 +116,23 @@ def display_map():
     plt.show()
     
 def save_progress(message=None):
-    """Saves the game state and optionally prints a checkpoint message."""
     save_game_state(game_state)
     if message:
         print(" ")
         print(message)
 
 def describe_location(location):
-    loc_data = game_state["locations"].get(location, {})
+    loc_data = game_state["locations"].get(location)
     
+    if not loc_data:
+        print(f"Error: The location '{location}' does not exist in the game state.")
+        return
+
     print(f"\n=== Current Location ===")
     print(location.replace('_', ' ').title())
 
     if "generated_description" not in loc_data:
-        prompt = f"{locations[location]['description']} Give a brief, atmospheric paragraph in D&D style, no more than 5 sentences."
+        prompt = f"{loc_data['description']} Give a brief, atmospheric paragraph in D&D style, no more than 5 sentences."
         loc_data["generated_description"] = generate_description(prompt)
         game_state["locations"][location] = loc_data
         save_game_state(game_state)
@@ -145,31 +144,50 @@ def describe_location(location):
         print("\n=== NPCs Here ===")
         for npc, data in loc_data["npcs"].items():
             status = "defeated" if data.get("hp", 0) <= 0 or data.get("status") == "defeated" else "active"
-            if status == "defeated":
-                print(f"- {npc.capitalize()} ({status})")
-            else:
-                print(f"- {npc.capitalize()} ({status}) - HP: {data['hp']}, Attack: {data['attack']}")
-    
+            print(f"- {npc.capitalize()} ({status}) - HP: {data['hp']}, Attack: {data['attack']}" if status == "active" else f"- {npc.capitalize()} ({status})")
+
     if loc_data.get("items"):
         print("\n=== Items Available ===")
         for item_name, item_data in loc_data["items"].items():
             description = item_data.get("description", "No description available")
-            if item_data["type"] == "healing":
+            item_type = item_data.get("type", "misc")
+            if item_type == "healing":
                 print(f"- {item_name.capitalize()} (Healing) - Restores {item_data['healing_amount']} HP: {description}")
-            elif item_data["type"] == "key":
+            elif item_type == "key":
                 print(f"- {item_name.capitalize()} (Key) - Can unlock certain doors: {description}")
-            elif item_data["type"] == "weapon":
+            elif item_type == "weapon":
                 print(f"- {item_name.capitalize()} (Weapon) - Increases attack power: {description}")
             else:
                 print(f"- {item_name.capitalize()} - {description}")
-    
-    if locations[location].get("connections"):
+
+    if loc_data.get("connections"):
         print("\n=== Paths Available ===")
-        for direction, connected_location in locations[location]["connections"].items():
+        for direction, connected_location in loc_data["connections"].items():
             lock_status = "(locked)" if loc_data.get("locked_paths", {}).get(direction, False) else ""
             print(f"- {direction.capitalize()}: {connected_location.replace('_', ' ').title()} {lock_status}")
-    
+
     print("\n")
+    
+def perform_skill_check(task_description, difficulty="simple"):
+    print(f"\nAttempting: {task_description}")
+    roll = random.randint(1, 10)
+    print(f"You rolled a {roll}!")
+
+    if difficulty == "simple":
+        success_threshold = 3
+    elif difficulty == "challenging":
+        success_threshold = 6
+    elif difficulty == "very_challenging":
+        success_threshold = 8
+    else:
+        raise ValueError(f"Unknown difficulty level: {difficulty}")
+
+    if roll >= success_threshold:
+        print(f"Success! You manage to complete the task: {task_description}.")
+        return True
+    else:
+        print(f"Failure. You could not complete the task: {task_description}.")
+        return False
 
 def display_player_stats():
     player = game_state["player"]
@@ -230,7 +248,6 @@ def pick_up_item(item_name):
 
 def use_item(item_name):
     inventory = game_state["player"]["inventory"]
-
     item = next((item for item in inventory if item["name"] == item_name), None)
     
     if not item:
@@ -238,7 +255,9 @@ def use_item(item_name):
         print(f"You don't have '{item_name}' in your inventory. Available items: {available_items}")
         return
 
-    if item["type"] == "healing":
+    item_type = item.get("type")
+
+    if item_type == "healing":
         player_hp = game_state["player"]["hp"]
         max_hp = game_state["player"]["max_hp"]
         if player_hp >= max_hp:
@@ -246,63 +265,36 @@ def use_item(item_name):
             return
         healing_amount = item.get("healing_amount", 0)
         healed_amount = min(healing_amount, max_hp - player_hp)
-        game_state["player"]["hp"] = player_hp + healed_amount
+        game_state["player"]["hp"] += healed_amount
         print(f"\n=== Item Used ===")
-        print(f"You used a {item_name} and gained {healed_amount} HP.")
-        
+        print(f"You used a {item_name} and restored {healed_amount} HP.")
         inventory.remove(item)
 
-    elif item["type"] == "key":
-        location = game_state["player"]["location"]
-        locked_paths = game_state["locations"][location].get("locked_paths", {})
-        
-        if any(locked_paths.values()):
-            for path in locked_paths:
-                locked_paths[path] = False
-            print(f"\n=== Item Used ===")
-            print(f"You used {item_name} to unlock the path(s).")
-            
-            inventory.remove(item)
-        else:
-            print("There is no locked path to use the key on here.")
-            
-    elif item["type"] == "torch":
-        location = game_state["player"]["location"]
-        hidden_items = game_state["locations"][location].get("hidden_items", [])
-        if hidden_items:
-            print(f"\n=== Item Used ===")
-            print(f"You used a {item_name} to reveal hidden items!")
-            for hidden_item in hidden_items:
-                game_state["locations"][location]["items"][hidden_item["name"]] = hidden_item
-            game_state["locations"][location]["hidden_items"] = []
-            inventory.remove(item)
-        else:
-            print("There are no hidden items to reveal here.")
-            
-    elif item["type"] == "shield":
-        game_state["player"]["defense"] = game_state["player"].get("defense", 0) + item.get("defense_boost", 2)
-        print(f"\n=== Item Used ===")
-        print(f"You used a {item_name} and gained a defense boost.")
-        inventory.remove(item)
-        
-    elif item["type"] == "magic_water":
-        player_hp = game_state["player"]["hp"]
-        max_hp = game_state["player"]["max_hp"]
-        healing_amount = item.get("healing_amount", 20)
-        healed_amount = min(healing_amount, max_hp - player_hp)
-        game_state["player"]["hp"] += healed_amount
-        game_state["player"]["xp"] += 10
-        print(f"\n=== Item Used ===")
-        print(f"You used {item_name}, gained {healed_amount} HP, and earned 10 XP.")
-        inventory.remove(item)
-        
-    elif item["type"] == "weapon":
+    elif item_type == "weapon":
         weapon_attack = item.get("attack_boost", 5)
         game_state["player"]["attack"] += weapon_attack
         print(f"\n=== Item Equipped ===")
         print(f"You equipped {item_name} and permanently increased your attack by {weapon_attack}.")
         inventory.remove(item)
-        
+
+    elif item_type == "tool" and item_name == "torch":
+        print(f"\n=== Item Used ===")
+        print(f"You used a {item_name} to search for hidden items!")
+        search_for_hidden_item()
+        inventory.remove(item)
+
+    elif item_type == "key":
+        location = game_state["player"]["location"]
+        locked_paths = game_state["locations"][location].get("locked_paths", {})
+        if any(locked_paths.values()):
+            for path in locked_paths:
+                locked_paths[path] = False
+            print(f"\n=== Item Used ===")
+            print(f"You used {item_name} to unlock all locked paths in this location.")
+            inventory.remove(item)
+        else:
+            print("There is no locked path to use the key on here.")
+
     else:
         print(f"The {item_name} can't be used directly.")
 
@@ -335,24 +327,26 @@ def level_up():
     print(f"New stats - HP: {player['hp']}, Attack: {player['attack']}, XP to next level: {player['xp_to_next_level']}")
     save_game_state(game_state)
 
+def roll_dice(sides=6):
+    return random.randint(1, sides)
+
 def engage_combat(npc_name):
     print(f"\n=== Combat Initiated: {npc_name.capitalize()} ===")
     player = game_state["player"]
-    npc = game_state["locations"][game_state["player"]["location"]]["npcs"][npc_name]
+    npc = game_state["locations"][player["location"]]["npcs"][npc_name]
+
+    npc.setdefault("attack", 5)
 
     while player["hp"] > 0 and npc["hp"] > 0:
-        action = input("Choose your action (attack, defend, use [item], quit): ").lower().split()
+        # Player's turn
+        print(f"\nYour turn! Your HP: {player['hp']}, {npc_name.capitalize()} HP: {npc['hp']}")
+        action = input("Choose your action (roll, use [item], inventory, quit): ").lower().split()
 
-        if action[0] == "attack":
-            player_damage = player["attack"]
-            if random.random() < 0.15:
-                player_damage *= 2
-                print("Critical Hit!")
-            elif random.random() < 0.05:
-                npc["status"] = "stunned"
-                print(f"The {npc_name} is stunned and cannot attack next turn!")
-
+        if action[0] == "roll":
+            roll = random.randint(1, 6)
+            player_damage = max(1, player["attack"] + roll)
             npc["hp"] -= player_damage
+            print(f"You rolled a {roll}!")
             print(f"You hit the {npc_name} for {player_damage} damage! {npc_name.capitalize()} HP: {max(npc['hp'], 0)}")
 
             if npc["hp"] <= 0:
@@ -360,50 +354,35 @@ def engage_combat(npc_name):
                 npc["status"] = "defeated"
                 gain_xp(10)
                 save_progress("Defeated an enemy")
-                check_quest_completion()
-
-                if npc_name == "final_boss":
-                    print("\nCongratulations! You have defeated the Final Boss and completed the game!")
-                    print("You retrieve the ancient artifact, marking your success as a true adventurer.")
-                    save_progress("Game completed")
                 return True
-
-        elif action[0] == "defend":
-            npc_damage = max(1, npc["attack"] - random.randint(1, 3))
-            print(f"The {npc_name} attacks, but your defense absorbs some damage! You take {npc_damage} damage.")
-            player["hp"] -= npc_damage
 
         elif action[0] == "use" and len(action) > 1:
             item_name = action[1]
             use_item(item_name)
 
+        elif action[0] == "inventory":
+            display_inventory()
+
         elif action[0] == "quit":
-            print("You have retreated from combat.")
-            return False
+            print("You retreated from the combat.")
+            return True
 
         else:
-            print("Invalid action. Choose 'attack', 'defend', 'use [item]', or 'quit'.")
+            print("Invalid action. Choose 'roll', 'use [item]', 'inventory', or 'quit'.")
             continue
-        print(f"\nYour HP: {max(player['hp'], 0)}\n")
-        if npc["hp"] > 0 and npc.get("status") != "stunned":
-            npc_damage = npc["attack"]
-            if random.random() < 0.2:
-                npc_damage *= 2
-                print("The enemy lands a critical hit!")
-            elif random.random() < 0.1:
-                npc_damage = 0
-                print("The enemy missed!")
 
+        if npc["hp"] > 0:
+            print(f"\n{npc_name.capitalize()}'s turn!")
+            roll = random.randint(1, 6)
+            npc_damage = max(1, npc["attack"] + roll)
             player["hp"] -= npc_damage
+            print(f"The {npc_name} rolled a {roll}!")
             print(f"The {npc_name} hits you for {npc_damage} damage! Your HP: {max(player['hp'], 0)}")
 
             if player["hp"] <= 0:
                 print("\nYou have been defeated. Game Over.")
                 save_progress("Player defeated")
-                return True
-        elif npc.get("status") == "stunned":
-            print(f"The {npc_name} is stunned and cannot attack this turn.")
-            npc["status"] = "active"
+                return False
 
         save_game_state(game_state)
 
@@ -415,24 +394,32 @@ def move_player(direction):
 
     if direction in location_data["connections"]:
         new_location = location_data["connections"][direction]
-        
+
         if location_data.get("locked_paths", {}).get(direction, False):
-            has_key = any(item["name"] == "key" and not item.get("used", False) for item in game_state["player"]["inventory"])
-            if has_key:
-                use_key = input(f"The path to {new_location.replace('_', ' ').title()} is locked. Do you want to use a key to unlock it? (yes/no): ").lower()
-                if use_key == "yes":
-                    location_data["locked_paths"][direction] = False
-                    for item in game_state["player"]["inventory"]:
-                        if item["name"] == "key" and not item.get("used", False):
-                            item["used"] = True
-                            break
-                    print(f"You used a key to unlock the path to {new_location.replace('_', ' ').title()}!")
-                else:
-                    print("You chose not to use the key. The path remains locked.")
-                    return
-            else:
-                print(f"The path to {new_location.replace('_', ' ').title()} is locked and you have no key to unlock it.")
+            print(f"The path to {new_location.replace('_', ' ').title()} is locked.")
+
+            key_item = next((item for item in game_state["player"]["inventory"] if item["name"] == "key"), None)
+            if not key_item:
+                print("You don't have a key to attempt unlocking this door.")
                 return
+
+            while True:
+                action = input("What would you like to do? (unlock, inventory, quit): ").lower()
+
+                if action == "unlock":
+                    if unlock_door(current_location, direction):
+                        print(f"You successfully unlocked the path to {new_location.replace('_', ' ').title()}!")
+                        break
+                    else:
+                        print("The path remains locked.")
+                        return
+                elif action == "inventory":
+                    display_inventory()
+                elif action == "quit":
+                    print("You chose to not unlock the door and remain in your current location.")
+                    return
+                else:
+                    print("Invalid action. Try again.")
 
         game_state["player"]["location_history"].append(current_location)
         game_state["player"]["location"] = new_location
@@ -494,6 +481,31 @@ def talk_to_npc(npc_name):
         npc["conversation_history"].append({"player": player_input, "npc": npc_response})
 
     save_game_state(game_state)
+
+def search_for_hidden_item():
+    torch_item = next((item for item in game_state["player"]["inventory"] if item["name"] == "torch"), None)
+    if not torch_item:
+        print("You need a torch to search for hidden items in the dark.")
+        return
+
+    print("You carefully search the area for hidden items...")
+
+    if perform_skill_check("Searching for hidden items", "challenging"):
+        possible_items = [
+            {"name": "magic_amulet", "type": "healing", "healing_amount": 30, "description": "A powerful amulet of protection."},
+            {"name": "potion", "type": "healing", "healing_amount": 15, "description": "Restores health."},
+            {"name": "ancient_scroll", "type": "quest", "description": "A scroll with mysterious symbols."},
+            {"name": "silver_dagger", "type": "weapon", "attack" : 5, "description": "A finely crafted silver dagger."},
+            {"name": "key", "type": "key", "description": "A rusty key that seems to fit old locks."},
+            {"name": "torch", "type": "tool", "description": "A flickering torch that illuminates the darkness."}
+        ]
+        found_item = random.choice(possible_items)
+
+        game_state["player"]["inventory"].append(found_item)
+        print(f"Success! You found a hidden item: {found_item['name'].capitalize()}!")
+        save_game_state(game_state)
+    else:
+        print("Despite your best efforts, you couldn't find anything hidden.")
         
 def skill_check(difficulty):
     roll = random.randint(1, 10)
@@ -503,40 +515,31 @@ def skill_check(difficulty):
         return "success"
     return "failure"
 
-def unlock_door():
-    if not any(item["name"] == "key" for item in game_state["player"]["inventory"]):
-        print("You need a key to unlock any door.")
-        return
+def unlock_door(location, direction):
+    current_location = game_state["locations"].get(location)
+    locked_paths = current_location.get("locked_paths", {})
 
-    current_location = game_state["player"]["location"]
-    location_data = game_state["locations"].get(current_location, {})
-    locked_paths = location_data.get("locked_paths", {})
+    if not locked_paths.get(direction, False):
+        print(f"There is no locked path in the {direction} direction.")
+        return False
 
-    locked_directions = [direction for direction, is_locked in locked_paths.items() if is_locked]
+    print("You use a key to attempt unlocking the door.")
+    game_state["player"]["inventory"] = [
+        item for item in game_state["player"]["inventory"] if item["name"] != "key"
+    ]
 
-    if not locked_directions:
-        print("There are no locked paths here.")
-        return
+    task_description = f"unlocking the door to {direction}"
+    difficulty = "challenging" if "north" in direction else "simple"
+    success = perform_skill_check(task_description, difficulty)
 
-    if len(locked_directions) == 1:
-        direction = locked_directions[0]
-        use_key_for_unlock()
-        locked_paths[direction] = False
-        print(f"The door to the {direction} has been unlocked!")
-        return
-
-    print("Multiple paths are locked. Choose a direction to unlock:")
-    for direction in locked_directions:
-        print(f"- {direction.capitalize()}")
-
-    chosen_direction = input("Enter direction to unlock: ").lower()
-
-    if chosen_direction in locked_directions:
-        use_key_for_unlock()
-        locked_paths[chosen_direction] = False
-        print(f"The door to the {chosen_direction} has been unlocked!")
+    if success:
+        current_location["locked_paths"][direction] = False
+        save_game_state(game_state)
+        print(f"The door to {direction} unlocks with a satisfying click!")
+        return True
     else:
-        print("Invalid direction. Please try again.")
+        print("Despite your efforts, the door remains locked.")
+        return False
 
 def use_key_for_unlock():
     inventory = game_state["player"]["inventory"]
@@ -546,23 +549,6 @@ def use_key_for_unlock():
             save_game_state(game_state)
             return True
     return False
-
-def perform_action_with_skill_check(action_type):
-    if action_type == "find_hidden_item":
-        result = skill_check("challenging")
-        if result == "success":
-            location = game_state["player"]["location"]
-            hidden_item = game_state["locations"][location].get("hidden_item", None)
-            
-            if hidden_item:
-                print(f"You found a hidden item: {hidden_item['name']}!")
-                game_state["player"]["inventory"].append(hidden_item)
-                del game_state["locations"][location]["hidden_item"]
-                save_game_state(game_state)
-            else:
-                print("There seems to be nothing hidden here.")
-        else:
-            print("You search around but find nothing of interest.")
 
 def select_npc():
     location = game_state["player"]["location"]
@@ -616,12 +602,68 @@ def start_new_game():
         save_progress("A new game has started!")
     else:
         print("\nNew game canceled. Continuing with the current progress.")
+        
+def generate_location_image():
+    location = game_state["player"]["location"]
+    loc_data = game_state["locations"].get(location)
+
+    if not loc_data:
+        print(f"Error: The location '{location}' does not exist in the game state.")
+        return
+
+    if "generated_image" in loc_data:
+        generated_data = loc_data["generated_image"]
+
+        if isinstance(generated_data, dict) and "file_path" in generated_data and "url" in generated_data:
+            print(f"Image already generated for {location}:")
+            print(f" - Local File: {generated_data['file_path']}")
+            print(f" - URL: {generated_data['url']}")
+        else:
+            print(f"Error: The 'generated_image' field for {location} is invalid. Regenerating...")
+            description = loc_data.get("generated_description", loc_data["description"])
+            generated_data = generate_image_with_deepai(description, location)
+            if generated_data:
+                loc_data["generated_image"] = generated_data
+                game_state["locations"][location] = loc_data
+                save_game_state(game_state)
+                print(f"Image regenerated for {location}:")
+                print(f" - Local File: {generated_data['file_path']}")
+                print(f" - URL: {generated_data['url']}")
+            else:
+                print("Failed to regenerate an image for this location.")
+    else:
+        print(f"Generating an image for {location}...")
+        description = loc_data.get("generated_description", loc_data["description"])
+        generated_data = generate_image_with_deepai(description, location)
+        if generated_data:
+            loc_data["generated_image"] = generated_data
+            game_state["locations"][location] = loc_data
+            save_game_state(game_state)
+            print(f"Image regenerated for {location}:")
+            print(f" - Local File: {generated_data['file_path']}")
+            print(f" - URL: {generated_data['url']}")
+        else:
+            print("Failed to generate an image for this location.")
+
+def display_quest(game_state):
+    quests = game_state.get("quests", {})
+    if not quests:
+        print("No active quests available.")
+        return
+
+    print("\n=== Quest Details ===")
+    for quest_name, quest_data in quests.items():
+        status = "Completed" if quest_data.get("completed", False) else "Not Completed"
+        print(f"- Quest Name: {quest_name.capitalize()}")
+        print(f"  Description: {quest_data.get('description', 'No description available.')}")
+        print(f"  Status: {status}")
+        print("-" * 40)
     
 def show_help():
     print("\n=== Available Commands ===")
-    print("\nNon-Combat Commands:")
     print("  new                 - Start a new game, erasing current progress.")
     print("  look                - Describe your current surroundings, including NPCs, items, and possible paths.")
+    print("  image               - Generate an image for the current location using AI.")
     print("  stats               - Show your current stats including HP, level, attack power, and XP.")
     print("  inventory           - Display the items you are carrying with details.")
     print("  pick [item]         - Pick up an item from your current location (e.g., 'pick potion').")
@@ -629,31 +671,18 @@ def show_help():
     print("  drop [item]         - Remove an item from your inventory (e.g., 'drop potion').")
     print("  move [direction]    - Move to a new location in a specified direction (e.g., 'move north').")
     print("  back                - Return to the previous location.")
-    print("  unlock_door         - Attempt to unlock a locked path if you have a key.")
-    print("  search              - Search for hidden items in the area.")
+    print("  unlock              - Attempt to unlock a locked path if you have a key.")
     print("  talk [npc]          - Start a conversation with an NPC in your location (e.g., 'talk goblin').")
-    print("                        Type 'stop' during a conversation to end it.")
+    print("  fight [npc]         - Engage in combat with an NPC (e.g., 'fight goblin').")
+    print("  goal                - Display the current quest and progress of the game.")
     print("  map                 - Display the visual map of the game's world.")
     print("  quit                - Exit the game. Progress will be saved.")
-
-    print("\nCombat Commands:")
-    print("  fight [npc]         - Engage in combat with an NPC (e.g., 'fight goblin').")
-    print("  attack              - Attack the enemy during combat.")
-    print("  defend              - Defend against the enemy's next attack, reducing incoming damage.")
-    print("  use [item]          - Use an item from your inventory during combat (e.g., 'use potion').")
-    print("  quit                - Retreat from combat, exiting the combat mode.")
-
-    print("\n=== Goal ===")
-    print("Your objective is to defeat the final boss and retrieve the ancient artifact.")
-    print("Survive the enemies, gather items, and explore all areas to complete the game.")
-
     print("\nType 'help' anytime to see this list again.")
 
 def game_loop():
-    print("Welcome to the Dungeon Master Adventure Game!")
+    print("Welcome to the AI Dungeon Master Adventure Game!")
     print("Embark on a journey through dark forests, mystical lakes, and ancient ruins in search of hidden treasures and legendary artifacts.")
     print("Face challenging enemies, level up your skills, and strategically use items to survive the dangers that await.")
-    print("To complete the game, seek out and defeat the Final Boss guarding the ancient artifact.")
     print("\nType 'help' to see available commands. Good luck, adventurer!")
 
     in_combat = False
@@ -672,25 +701,6 @@ def game_loop():
                 result = engage_combat(combat_target)
                 if result:
                     in_combat = False
-                continue
-            elif action == "defend":
-                result = engage_combat(combat_target, defend=True)
-                if result:
-                    in_combat = False
-                continue
-            elif action == "use" and len(command) > 1:
-                item_name = command[1]
-                use_item(item_name)
-                result = engage_combat(combat_target)
-                if result:
-                    in_combat = False
-                continue
-            elif action == "quit":
-                print("You have retreated from combat.")
-                in_combat = False
-                continue
-            else:
-                print("You are in combat! Use 'attack', 'defend', 'use [item]', or 'quit' to continue.")
                 continue
 
         if action == "quit":
@@ -717,6 +727,8 @@ def game_loop():
                 drop_item(command[1])
             else:
                 print("Specify an item to drop. For example, 'drop potion'.")
+        elif action == "goal":
+            display_quest(game_state)
         elif action == "move" and not in_combat:
             if len(command) > 1:
                 direction = command[1]
@@ -742,12 +754,40 @@ def game_loop():
                     engage_combat(combat_target)
         elif action == "map":
             display_map()
-        elif action == "unlock_door" and not in_combat:
-            unlock_door()
-        elif action == "search" and not in_combat:
-            perform_action_with_skill_check("find_hidden_item")
+        elif action == "unlock":
+            current_location = game_state["player"]["location"]
+
+            if len(command) == 1:
+                locked_paths = {
+                    direction: locked
+                    for direction, locked in game_state["locations"][current_location].get("locked_paths", {}).items()
+                    if locked
+                }
+
+                if not locked_paths:
+                    print("There are no locked paths here.")
+                    continue
+
+                print("\nThe following paths are locked:")
+                for idx, direction in enumerate(locked_paths.keys(), start=1):
+                    print(f"{idx}. {direction.capitalize()}")
+                try:
+                    choice = int(input("Select a path to unlock (enter the number): "))
+                    direction = list(locked_paths.keys())[choice - 1]
+                except (ValueError, IndexError):
+                    print("Invalid selection. Try again.")
+                    continue
+            else:
+                direction = command[1]
+
+            if direction in game_state["locations"][current_location]["connections"]:
+                unlock_door(current_location, direction)
+            else:
+                print(f"There is no door in the {direction} direction.")
         elif action == "help":
             show_help()
+        elif action == "image" and not in_combat:
+            generate_location_image()
         elif action == "talk":
             location = game_state["player"]["location"]
             npcs = game_state["locations"][location].get("npcs", {})

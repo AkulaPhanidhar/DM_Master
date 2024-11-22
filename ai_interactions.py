@@ -2,6 +2,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 import os
 import re
+import requests
 from state_manager import load_game_state
 
 game_state = load_game_state()
@@ -56,6 +57,35 @@ def generate_npc_response(npc_name, player_input):
     
     return npc_response
 
+def generate_image_with_deepai(description, location_name, folder="generated_images"):
+    try:
+        url = "https://api.deepai.org/api/text2img"
+        headers = {"api-key": os.getenv("DEEPAI_API_KEY")}
+        data = {"text": f"{description}. Make it in a Dungeons & Dragons style, with a cave environment."}
+
+
+        response = requests.post(url, headers=headers, data=data)
+        response_data = response.json()
+
+        if "output_url" not in response_data:
+            print(f"Error: 'output_url' not found in API response.")
+            return None
+
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+
+        image_url = response_data["output_url"]
+        image_path = os.path.join(folder, f"{location_name}_image.png")
+        image_data = requests.get(image_url).content
+
+        with open(image_path, "wb") as img_file:
+            img_file.write(image_data)
+            
+        return {"file_path": image_path, "url": image_url}
+    except Exception as e:
+        print(f"Error during image generation: {e}")
+        return None
+
 def generate_initial_game_state():
     prompt = """
     Generate a structured game state for a Dungeons & Dragons-inspired game. The structure should include the following elements:
@@ -100,8 +130,9 @@ def generate_initial_game_state():
          - Quest items like "mystic_gem" or "ancient_artifact."
          - Equipment like "sword" (boosts attack) or "shield" (boosts defense).
          - Have the final boss guard a special item, such as an "ancient_artifact, and place it as an item in the location where the final boss is present" which the player must retrieve to complete a quest.
-         - these are the list of items you can add in total (potion, key, magic_water, torch, shield, weapons like sword, etc, only one mystic_gem), add these as many as you want but only one ancient_artifac in the location where the final boss is present.
+         - these are the list of items you can add in total (use any item name but use only these item types which are key, shield, healing, tool, weapon, etc, only one mystic_gem of type healing), add these as many as you want but only one ancient_artifac in the location where the final boss is present.
          - make sure there are more keys than the locked paths and able to find enought no of keys before a door.
+         - add atleast one item in 80 percentage of the locations and maximum 4 items in one location.
        - `connections`: Possible directions that lead to other locations (e.g., north, south, east, west), make the connections little comple, and make sure connections are properly connected to each other, example: from one location to other is connected as south, both should be south and no overlapping.
        - `locked_paths`: Indicate if any paths are locked, requiring an item (e.g., "key") to access, look at least 3 paths from any location to any location.
 
@@ -117,7 +148,7 @@ def generate_initial_game_state():
             "level": 1,
             "xp_to_next_level": 50,
             "inventory": [
-                {"name": "potion", "type": "healing", "healing_amount": 10, "used": False, "description": "A small bottle filled with a liquid that restores 10 HP."},
+                {"name": "potion", "type": "healing", "healing_amount": 10, "description": "A small bottle filled with a liquid that restores 10 HP."},
                 {"name": "key", "type": "key", "description": "A simple iron key, used to unlock certain doors."}
             ]
         },
@@ -255,6 +286,8 @@ def generate_initial_game_state():
                 }
             }
         }
+        
+    make sure there are more keys than the locked paths and able to find enought no of keys before a door.
 
     Format the response as a Python dictionary ready for integration into a JSON-based game state. Ensure the structure is nested and consistent, capturing all these elements in a structured and playable format.
     """
