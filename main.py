@@ -4,9 +4,29 @@ import random
 import matplotlib.pyplot as plt
 import networkx as nx
 
+def check_player_hp():
+    player_hp = game_state["player"].get("hp", 0)
+    if player_hp <= 0:
+        print("Your HP is too low to continue. You must start a new game.")
+        while True:
+            start_new = input("Would you like to start a new game? (yes/no): ").strip().lower()
+            if start_new == "yes":
+                start_new_game()
+                return True
+            elif start_new == "no":
+                print("Exiting the game. Thank you for playing!")
+                return False
+            else:
+                print("Invalid choice. Please type 'yes' or 'no'.")
+    return True
+
 def check_quest_completion():
+    all_completed = True
+
     for quest_name, quest_data in game_state["quests"].items():
         if not quest_data.get("completed"):
+            all_completed = False
+
             for item in game_state["player"]["inventory"]:
                 if item["name"] in quest_name:
                     quest_data["completed"] = True
@@ -22,6 +42,12 @@ def check_quest_completion():
                         break
 
     save_game_state(game_state)
+
+    if all_completed:
+        print("\n=== Game Over ===")
+        print("Congratulations, adventurer! You have completed all quests and conquered the realm.")
+        print("Your legacy will live on as a true hero of this land!")
+        exit_game()
 
 def load_or_initialize_game():
     game_state = load_game_state()
@@ -114,14 +140,9 @@ def display_map():
     )
     plt.axis("off")
     plt.show()
-    
-def save_progress(message=None):
-    save_game_state(game_state)
-    if message:
-        print(" ")
-        print(message)
 
-def describe_location(location):
+def describe_location():
+    location = game_state["player"]["location"]
     loc_data = game_state["locations"].get(location)
     
     if not loc_data:
@@ -151,22 +172,13 @@ def describe_location(location):
         for item_name, item_data in loc_data["items"].items():
             description = item_data.get("description", "No description available")
             item_type = item_data.get("type", "misc")
-            if item_type == "healing":
-                print(f"- {item_name.capitalize()} (Healing) - Restores {item_data['healing_amount']} HP: {description}")
-            elif item_type == "key":
-                print(f"- {item_name.capitalize()} (Key) - Can unlock certain doors: {description}")
-            elif item_type == "weapon":
-                print(f"- {item_name.capitalize()} (Weapon) - Increases attack power: {description}")
-            else:
-                print(f"- {item_name.capitalize()} - {description}")
+            print(f"- {item_name.capitalize()} ({item_type}) - {description}")
 
     if loc_data.get("connections"):
         print("\n=== Paths Available ===")
         for direction, connected_location in loc_data["connections"].items():
             lock_status = "(locked)" if loc_data.get("locked_paths", {}).get(direction, False) else ""
             print(f"- {direction.capitalize()}: {connected_location.replace('_', ' ').title()} {lock_status}")
-
-    print("\n")
     
 def perform_skill_check(task_description, difficulty="simple"):
     print(f"\nAttempting: {task_description}")
@@ -196,7 +208,6 @@ def display_player_stats():
     print(f"HP: {player['hp']}/{player['max_hp']}")
     print(f"Attack: {player['attack']}")
     print(f"XP: {player['xp']}/{player['xp_to_next_level']}")
-    print("\n")
 
 def display_inventory():
     inventory = game_state["player"]["inventory"]
@@ -216,14 +227,24 @@ def display_inventory():
         for item_name, info in item_counts.items():
             count = info["count"]
             item_data = info["data"]
-            description = (
-                f"(Healing) - Restores {item_data['healing_amount']} HP when used"
-                if item_data["type"] == "healing" else ""
-            )
-            print(f"- {item_name.capitalize()} x{count} {description}")
-    print("\n")
+            description = item_data.get("description", "No description available.")
+            
+            if item_data["type"] == "healing":
+                additional_info = f"(Healing) - Restores {item_data['healing_amount']} HP when used"
+            elif item_data["type"] == "key":
+                additional_info = "(Key) - Used to unlock paths."
+            elif item_data["type"] == "tool":
+                additional_info = f"(Tool) - {description}"
+            elif item_data["type"] == "quest_item":
+                additional_info = f"(Quest Item) - {description}"
+            elif item_data["type"] == "weapon":
+                additional_info = f"(Weapon) - Increases attack by {item_data.get('attack_boost', 0)}"
+            else:
+                additional_info = f"({item_data['type'].capitalize()}) - {description}"
+            
+            print(f"- {item_name.capitalize()} x{count} {additional_info}")
 
-def pick_up_item(item_name):
+def pick_up_item(item_name=None):
     location = game_state["player"]["location"]
     items = game_state["locations"][location].get("items", {})
 
@@ -231,9 +252,52 @@ def pick_up_item(item_name):
         print("There are no items available to pick up here.")
         return
 
-    if item_name not in items:
-        print(f"No such item '{item_name}' here. Available items: {', '.join(items.keys())}")
-        return
+    if not item_name:
+        print("\n=== Select Items to Pick Up ===")
+        for idx, item in enumerate(items.keys(), start=1):
+            print(f"{idx}. {item.capitalize()}")
+
+        try:
+            choice = input("Choose an item (enter the number, 'a' for all, or 0 to cancel): ").strip().lower()
+            if choice == "0":
+                print("Item pick-up canceled.")
+                return
+            elif choice == "a":
+                if "ancient_artifact" in items:
+                    final_boss = game_state["locations"][location]["npcs"].get("final_boss")
+                    if final_boss and final_boss["status"] != "defeated":
+                        print("You cannot pick up the ancient artifact without defeating the Final Boss!")
+                        rest_items = {k: v for k, v in items.items() if k != "ancient_artifact"}
+                        if rest_items:
+                            prompt = input("\nDo you want to pick the rest of the items? (yes/no): ").strip().lower()
+                            if prompt == "yes":
+                                picked_items = []
+                                for item_name, item_data in list(rest_items.items()):
+                                    game_state["player"]["inventory"].append({"name": item_name, **item_data})
+                                    picked_items.append(item_name)
+                                    items.pop(item_name)
+                                print(f"You picked up: {', '.join(picked_items)}.")
+                                check_quest_completion()
+                                save_game_state(game_state)
+                            else:
+                                print("Item pick-up canceled.")
+                        return
+
+                picked_items = []
+                for item_name, item_data in list(items.items()):
+                    game_state["player"]["inventory"].append({"name": item_name, **item_data})
+                    picked_items.append(item_name)
+                    items.pop(item_name)
+                print(f"You picked up: {', '.join(picked_items)}.")
+                check_quest_completion()
+                save_game_state(game_state)
+                return
+            else:
+                choice = int(choice)
+                item_name = list(items.keys())[choice - 1]
+        except (ValueError, IndexError):
+            print("Invalid choice. Pick-up canceled.")
+            return
 
     if item_name == "ancient_artifact":
         final_boss = game_state["locations"][location]["npcs"].get("final_boss")
@@ -241,10 +305,15 @@ def pick_up_item(item_name):
             print("You cannot pick up the ancient artifact without defeating the Final Boss!")
             return
 
+    if item_name not in items:
+        print(f"No such item '{item_name}' here. Available items: {', '.join(items.keys())}")
+        return
+
     item = items.pop(item_name)
     game_state["player"]["inventory"].append({"name": item_name, **item})
-    save_game_state(game_state)
     print(f"You picked up {item_name}.")
+    check_quest_completion()
+    save_game_state(game_state)
 
 def use_item(item_name):
     inventory = game_state["player"]["inventory"]
@@ -300,10 +369,10 @@ def use_item(item_name):
 
     save_game_state(game_state)
 
-def gain_xp(amount):
+def gain_xp(amount, npc_name):
     player = game_state["player"]
     player["xp"] += amount
-    print(f"\nYou gained {amount} XP!")
+    print(f"You earned {amount} XP for defeating the {npc_name}!")
 
     if player["xp"] >= player["xp_to_next_level"]:
         level_up()
@@ -317,87 +386,152 @@ def level_up():
     player["xp_to_next_level"] = int(player["xp_to_next_level"] * 1.5)
 
     if player["max_hp"] < 100:
-        player["max_hp"] = min(player["max_hp"] + 5, 100)
+        player["max_hp"] = min(player["max_hp"] + 10, 100)
 
     player["hp"] = player["max_hp"]
-    player["attack"] += 1
+    player["attack"] += 2
 
     print(f"\n=== Level Up! ===")
     print(f"You leveled up to Level {player['level']}!")
     print(f"New stats - HP: {player['hp']}, Attack: {player['attack']}, XP to next level: {player['xp_to_next_level']}")
     save_game_state(game_state)
 
-def roll_dice(sides=6):
-    return random.randint(1, sides)
+def engage_combat():
+    location = game_state["player"]["location"]
+    npcs = game_state["locations"][location].get("npcs", {})
+    active_npcs = {npc: data for npc, data in npcs.items() if data.get("status") != "defeated"}
 
-def engage_combat(npc_name):
+    if not active_npcs:
+        print("No active NPCs to fight here.")
+        return False
+
+    if game_state["player"]["hp"] <= 5:
+        print("You are too weak to fight. Heal yourself before engaging in combat.")
+        return False
+
+    npc_name = None
+    while npc_name is None:
+        if len(active_npcs) > 1:
+            print("\n=== Select an NPC to Fight ===")
+            for idx, npc in enumerate(active_npcs, start=1):
+                print(f"{idx}. {npc.capitalize()} (HP: {active_npcs[npc]['hp']}, Attack: {active_npcs[npc]['attack']})")
+            try:
+                choice = input("Choose an NPC (enter the number or 0 to cancel): ").strip()
+                if choice == "0":
+                    print("Combat canceled.")
+                    return False
+                choice = int(choice)
+                npc_name = list(active_npcs.keys())[choice - 1]
+            except (ValueError, IndexError):
+                print("Invalid choice. Let's make the chaos again. Try selecting an NPC.")
+        else:
+            npc_name = next(iter(active_npcs))
+
     print(f"\n=== Combat Initiated: {npc_name.capitalize()} ===")
     player = game_state["player"]
-    npc = game_state["locations"][player["location"]]["npcs"][npc_name]
+    npc = game_state["locations"][location]["npcs"][npc_name]
 
     npc.setdefault("attack", 5)
+    player_base_damage = player["attack"]
 
     while player["hp"] > 0 and npc["hp"] > 0:
-        # Player's turn
         print(f"\nYour turn! Your HP: {player['hp']}, {npc_name.capitalize()} HP: {npc['hp']}")
         action = input("Choose your action (roll, use [item], inventory, quit): ").lower().split()
 
+        skip_npc_turn = False
+
         if action[0] == "roll":
             roll = random.randint(1, 6)
-            player_damage = max(1, player["attack"] + roll)
+            critical_hit = roll == 6
+            player_damage = max(1, player_base_damage + roll + (5 if critical_hit else 0))
             npc["hp"] -= player_damage
             print(f"You rolled a {roll}!")
+            if critical_hit:
+                print("Critical hit!")
             print(f"You hit the {npc_name} for {player_damage} damage! {npc_name.capitalize()} HP: {max(npc['hp'], 0)}")
 
             if npc["hp"] <= 0:
                 print(f"\nYou defeated the {npc_name}!")
                 npc["status"] = "defeated"
-                gain_xp(10)
-                save_progress("Defeated an enemy")
+
+                base_xp = 10
+                hp_xp = npc.get("hp_max", npc["hp"]) // 2
+                attack_xp = npc["attack"] * 2
+                total_xp = base_xp + hp_xp + attack_xp
+
+                gain_xp(total_xp, npc_name)
+
+                check_quest_completion()
+
+                save_game_state(game_state)
                 return True
 
         elif action[0] == "use" and len(action) > 1:
             item_name = action[1]
             use_item(item_name)
+            skip_npc_turn = True
 
         elif action[0] == "inventory":
             display_inventory()
+            skip_npc_turn = True
 
         elif action[0] == "quit":
             print("You retreated from the combat.")
-            return True
+            save_game_state(game_state)
+            return False
 
         else:
             print("Invalid action. Choose 'roll', 'use [item]', 'inventory', or 'quit'.")
             continue
 
-        if npc["hp"] > 0:
+        if not skip_npc_turn and npc["hp"] > 0:
             print(f"\n{npc_name.capitalize()}'s turn!")
             roll = random.randint(1, 6)
-            npc_damage = max(1, npc["attack"] + roll)
+            critical_hit = roll == 6
+            npc_damage = max(1, npc["attack"] + roll + (5 if critical_hit else 0))
             player["hp"] -= npc_damage
             print(f"The {npc_name} rolled a {roll}!")
+            if critical_hit:
+                print(f"{npc_name.capitalize()} lands a critical hit!")
             print(f"The {npc_name} hits you for {npc_damage} damage! Your HP: {max(player['hp'], 0)}")
 
             if player["hp"] <= 0:
+                player["hp"] = 0
                 print("\nYou have been defeated. Game Over.")
-                save_progress("Player defeated")
-                return False
+                save_game_state(game_state)
+                exit_game()
 
         save_game_state(game_state)
 
     return False
     
-def move_player(direction):
-    current_location = game_state["player"]["location"]
-    location_data = game_state["locations"][current_location]
+def move_player(direction=None):
+    location = game_state["player"]["location"]
+    location_data = game_state["locations"][location]
+
+    if not direction:
+        print("\n=== Select a Direction to Move ===")
+        available_directions = list(location_data["connections"].keys())
+        for idx, available_direction in enumerate(available_directions, start=1):
+            connected_location = location_data["connections"][available_direction]
+            locked_status = " (Locked)" if location_data.get("locked_paths", {}).get(available_direction, False) else ""
+            print(f"{idx}. {available_direction.capitalize()} -> {connected_location.replace('_', ' ').title()}{locked_status}")
+
+        try:
+            choice = int(input("Choose a direction (enter the number or 0 to cancel): "))
+            if choice == 0:
+                print("Move action canceled.")
+                return
+            direction = available_directions[choice - 1]
+        except (ValueError, IndexError):
+            print("Invalid choice. Move action canceled.")
+            return
 
     if direction in location_data["connections"]:
         new_location = location_data["connections"][direction]
 
         if location_data.get("locked_paths", {}).get(direction, False):
             print(f"The path to {new_location.replace('_', ' ').title()} is locked.")
-
             key_item = next((item for item in game_state["player"]["inventory"] if item["name"] == "key"), None)
             if not key_item:
                 print("You don't have a key to attempt unlocking this door.")
@@ -407,7 +541,7 @@ def move_player(direction):
                 action = input("What would you like to do? (unlock, inventory, quit): ").lower()
 
                 if action == "unlock":
-                    if unlock_door(current_location, direction):
+                    if unlock_door(location, direction):
                         print(f"You successfully unlocked the path to {new_location.replace('_', ' ').title()}!")
                         break
                     else:
@@ -421,7 +555,7 @@ def move_player(direction):
                 else:
                     print("Invalid action. Try again.")
 
-        game_state["player"]["location_history"].append(current_location)
+        game_state["player"]["location_history"].append(location)
         game_state["player"]["location"] = new_location
         print(f"\nYou move {direction} to {new_location.replace('_', ' ').title()}.")
         save_game_state(game_state)
@@ -439,13 +573,33 @@ def move_back():
     else:
         print("You can't go back any further.")
 
-def talk_to_npc(npc_name):
+def talk_to_npc():
     location = game_state["player"]["location"]
-    npc = game_state["locations"][location]["npcs"].get(npc_name)
+    npcs = game_state["locations"][location].get("npcs", {})
 
-    if not npc:
-        print("No such NPC to talk to here.")
+    active_npcs = {npc: data for npc, data in npcs.items() if data.get("status") != "defeated"}
+
+    if not active_npcs:
+        print("There are no active NPCs here to talk to.")
         return
+
+    if len(active_npcs) > 1:
+        print("\n=== Select an NPC to Talk ===")
+        for idx, npc in enumerate(active_npcs, start=1):
+            print(f"{idx}. {npc.capitalize()}")
+        try:
+            choice = int(input("Choose an NPC to talk to (enter the number or 0 to cancel): ").strip())
+            if choice == 0:
+                print("Conversation canceled.")
+                return
+            npc_name = list(active_npcs.keys())[choice - 1]
+        except (ValueError, IndexError):
+            print("Invalid choice. Conversation canceled.")
+            return
+    else:
+        npc_name = next(iter(active_npcs))
+
+    npc = game_state["locations"][location]["npcs"][npc_name]
 
     if npc["status"] == "defeated":
         print(f"{npc_name.capitalize()} is defeated and cannot respond.")
@@ -454,7 +608,8 @@ def talk_to_npc(npc_name):
 
     print(f"\nYou start a conversation with {npc_name.capitalize()}.")
 
-    if "conversation_history" in npc and npc["conversation_history"]:
+    has_previous_conversation = "conversation_history" in npc and npc["conversation_history"]
+    if has_previous_conversation:
         print(f"\n=== Previous Conversation with {npc_name.capitalize()} ===")
         for dialogue in npc["conversation_history"]:
             print(f"You: {dialogue['player']}")
@@ -463,7 +618,8 @@ def talk_to_npc(npc_name):
     if "conversation_history" not in npc:
         npc["conversation_history"] = []
 
-    print(f"\n=== Current Conversation with {npc_name.capitalize()} ===")
+    if has_previous_conversation:
+        print(f"\n=== Current Conversation with {npc_name.capitalize()} ===")
     npc_initial_response = generate_npc_response(npc_name, "start")
     print(f"{npc_name.capitalize()}: {npc_initial_response}")
     npc["conversation_history"].append({"player": "start", "npc": npc_initial_response})
@@ -541,39 +697,6 @@ def unlock_door(location, direction):
         print("Despite your efforts, the door remains locked.")
         return False
 
-def use_key_for_unlock():
-    inventory = game_state["player"]["inventory"]
-    for item in inventory:
-        if item["name"] == "key":
-            inventory.remove(item)
-            save_game_state(game_state)
-            return True
-    return False
-
-def select_npc():
-    location = game_state["player"]["location"]
-    npcs = game_state["locations"][location].get("npcs", {})
-
-    active_npcs = {npc: data for npc, data in npcs.items() if data.get("status") != "defeated"}
-
-    if not active_npcs:
-        print("No active NPCs to fight here.")
-        return None
-
-    print("\n=== Select NPC to Fight ===")
-    for i, npc in enumerate(active_npcs, 1):
-        print(f"{i}. {npc.capitalize()} (HP: {active_npcs[npc]['hp']}, Attack: {active_npcs[npc]['attack']})")
-
-    choice = input("Enter the number of the NPC you want to fight: ").strip()
-    
-    try:
-        selected_index = int(choice) - 1
-        selected_npc = list(active_npcs.keys())[selected_index]
-        return selected_npc
-    except (ValueError, IndexError):
-        print("Invalid choice. No NPC selected.")
-        return None
-
 def drop_item(item_name):
     inventory = game_state["player"]["inventory"]
 
@@ -599,7 +722,7 @@ def start_new_game():
     if confirm == "yes":
         game_state = initialize_game_state()
         save_game_state(game_state)
-        save_progress("A new game has started!")
+        print("A new game has started!")
     else:
         print("\nNew game canceled. Continuing with the current progress.")
         
@@ -645,7 +768,7 @@ def generate_location_image():
         else:
             print("Failed to generate an image for this location.")
 
-def display_quest(game_state):
+def display_quest():
     quests = game_state.get("quests", {})
     if not quests:
         print("No active quests available.")
@@ -658,6 +781,10 @@ def display_quest(game_state):
         print(f"  Description: {quest_data.get('description', 'No description available.')}")
         print(f"  Status: {status}")
         print("-" * 40)
+        
+def exit_game():
+    print("Exiting the game. Thank you for playing!\n")
+    exit()
     
 def show_help():
     print("\n=== Available Commands ===")
@@ -666,14 +793,14 @@ def show_help():
     print("  image               - Generate an image for the current location using AI.")
     print("  stats               - Show your current stats including HP, level, attack power, and XP.")
     print("  inventory           - Display the items you are carrying with details.")
-    print("  pick [item]         - Pick up an item from your current location (e.g., 'pick potion').")
-    print("  use [item]          - Use an item from your inventory (e.g., 'use potion').")
-    print("  drop [item]         - Remove an item from your inventory (e.g., 'drop potion').")
-    print("  move [direction]    - Move to a new location in a specified direction (e.g., 'move north').")
+    print("  pick                - Pick up an item from your current location.")
+    print("  use                 - Use an item from your inventory (e.g., 'use potion').")
+    print("  drop                - Remove an item from your inventory (e.g., 'drop potion').")
+    print("  move                - Move to a new location in a specified direction (e.g., 'move north').")
     print("  back                - Return to the previous location.")
     print("  unlock              - Attempt to unlock a locked path if you have a key.")
-    print("  talk [npc]          - Start a conversation with an NPC in your location (e.g., 'talk goblin').")
-    print("  fight [npc]         - Engage in combat with an NPC (e.g., 'fight goblin').")
+    print("  talk                - Start a conversation with an NPC in your location.")
+    print("  fight               - Engage in combat with an NPC.")
     print("  goal                - Display the current quest and progress of the game.")
     print("  map                 - Display the visual map of the game's world.")
     print("  quit                - Exit the game. Progress will be saved.")
@@ -684,9 +811,11 @@ def game_loop():
     print("Embark on a journey through dark forests, mystical lakes, and ancient ruins in search of hidden treasures and legendary artifacts.")
     print("Face challenging enemies, level up your skills, and strategically use items to survive the dangers that await.")
     print("\nType 'help' to see available commands. Good luck, adventurer!")
+    
+    if not check_player_hp():
+        return
 
     in_combat = False
-    combat_target = None
 
     while True:
         command = input("\n> ").lower().split()
@@ -695,28 +824,34 @@ def game_loop():
         if action == "new":
             start_new_game()
             continue
-
-        if in_combat:
-            if action == "attack":
-                result = engage_combat(combat_target)
-                if result:
-                    in_combat = False
-                continue
-
         if action == "quit":
             print("Thanks for playing!")
             break
         elif action == "look" and not in_combat:
-            describe_location(game_state["player"]["location"])
+            describe_location()
         elif action == "stats" and not in_combat:
             display_player_stats()
         elif action == "inventory" and not in_combat:
             display_inventory()
+        elif action == "goal" and not in_combat:
+            display_quest()
+        elif action == "back" and not in_combat:
+            move_back()
+        elif action == "help" and not in_combat:
+            show_help()
+        elif action == "image" and not in_combat:
+            generate_location_image()
+        elif action == "talk" and not in_combat:
+            talk_to_npc()
+        elif action == "fight" and not in_combat:
+            engage_combat()
+        elif action == "map":
+            display_map()
         elif action == "pick" and not in_combat:
             if len(command) > 1:
-                pick_up_item(command[1])
+                print("Invalid action. Use 'pick' without specifying an item to select items from the menu.")
             else:
-                print("Specify an item to pick up.")
+                pick_up_item()
         elif action == "use":
             if len(command) > 1:
                 use_item(command[1])
@@ -727,47 +862,23 @@ def game_loop():
                 drop_item(command[1])
             else:
                 print("Specify an item to drop. For example, 'drop potion'.")
-        elif action == "goal":
-            display_quest(game_state)
         elif action == "move" and not in_combat:
             if len(command) > 1:
                 direction = command[1]
                 move_player(direction)
             else:
-                print("Specify a direction to move (e.g., 'move north').")
-        elif action == "back" and not in_combat:
-            move_back()
-        elif action == "fight":
-            location = game_state["player"]["location"]
-            npcs = game_state["locations"][location].get("npcs", {})
-            active_npcs = {npc: data for npc, data in npcs.items() if data.get("status") != "defeated"}
-            if not active_npcs:
-                print("No active NPCs to fight here.")
-                continue
-            if len(active_npcs) == 1:
-                combat_target = next(iter(active_npcs))
-                engage_combat(combat_target)
-            else:
-                combat_target = select_npc()
-                if combat_target:
-                    print(f"\n=== Combat Initiated: {combat_target.capitalize()} ===")
-                    engage_combat(combat_target)
-        elif action == "map":
-            display_map()
+                move_player()
         elif action == "unlock":
             current_location = game_state["player"]["location"]
-
             if len(command) == 1:
                 locked_paths = {
                     direction: locked
                     for direction, locked in game_state["locations"][current_location].get("locked_paths", {}).items()
                     if locked
                 }
-
                 if not locked_paths:
                     print("There are no locked paths here.")
                     continue
-
                 print("\nThe following paths are locked:")
                 for idx, direction in enumerate(locked_paths.keys(), start=1):
                     print(f"{idx}. {direction.capitalize()}")
@@ -779,33 +890,12 @@ def game_loop():
                     continue
             else:
                 direction = command[1]
-
             if direction in game_state["locations"][current_location]["connections"]:
                 unlock_door(current_location, direction)
             else:
                 print(f"There is no door in the {direction} direction.")
-        elif action == "help":
-            show_help()
-        elif action == "image" and not in_combat:
-            generate_location_image()
-        elif action == "talk":
-            location = game_state["player"]["location"]
-            npcs = game_state["locations"][location].get("npcs", {})
-
-            active_npcs = {npc: data for npc, data in npcs.items() if data.get("status") != "defeated"}
-            if not active_npcs:
-                print("There are no active NPCs here to talk to.")
-                continue
-
-            if len(active_npcs) == 1:
-                npc_name = next(iter(active_npcs))
-                talk_to_npc(npc_name)
-            else:
-                npc_name = select_npc(active_npcs)
-                if npc_name:
-                    talk_to_npc(npc_name)
-                else:
-                    print("No NPC selected to talk to.")
+        else:
+            print("Unknown command. Type 'help' to see available actions.")
 
 if __name__ == "__main__":
     game_loop()

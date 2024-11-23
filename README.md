@@ -116,7 +116,11 @@ A Dungeons & Dragons-inspired interactive text-based adventure game where player
 This project leverages:
 
 - **OpenAI GPT-4o**:  
-  For text generation and context-aware NPC interactions.
+  For generating:
+
+  - Location Discription.
+  - Context-aware NPC interactions.
+  - World map generatiion.
 
 - **DeepAI**:  
   For dynamic image generation.
@@ -126,7 +130,22 @@ This project leverages:
 ## Installation
 
 1. **Clone the repository**:
+
    ```bash
    git clone https://github.com/AkulaPhanidhar/DM_Master.git
    cd DM_Master
    ```
+
+2. **Create a Virtual Envirnoment**:
+
+```bash
+python3 -m venv <env Name>
+```
+
+```bash
+source <env Name>/bin/activate
+```
+
+3. install requit=rement.txt
+
+4. run python main.py
