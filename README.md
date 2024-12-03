@@ -333,3 +333,7 @@ The `.env` file should never be committed to version control as it contains sens
 ---
 
 ## Enjoy your adventure in the AI-generated fantasy world!
+
+Embark on a journey through dark forests, mystical lakes, and ancient ruins in search of hidden treasures and legendary artifacts. Face challenging enemies, avoid cunning traps, level up your skills, and strategically use items to survive the dangers that await.
+
+**Good luck, adventurer!**

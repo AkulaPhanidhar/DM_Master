@@ -10,7 +10,7 @@ from ai_interactions import (
     generate_image_with_deepai,
 )
 
-use_voice = False
+use_voice = True
 
 engine = pyttsx3.init()
 engine.setProperty("rate", 180)
