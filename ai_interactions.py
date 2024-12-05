@@ -240,6 +240,12 @@ def generate_initial_game_state(attempts=3):
                     "silver_key": {
                         "type": "key",
                         "description": "A shiny silver key with intricate engravings."
+                    },
+                    "dagger": {
+                        "name": "dagger",
+                        "type": "weapon",
+                        "attack_boost": 10,
+                        "description": "A small but sharp dagger."
                     }
                 },
                 "connections": {
@@ -285,6 +291,7 @@ def generate_initial_game_state(attempts=3):
             - Place both the `final_boss` NPC and the `ancient_artifact` item (type: `scroll`) in the **same location**.
             - For the `vanquish_final_boss` quest, set `required_npcs` to `["final_boss"]`.
             - For the `retrieve_ancient_artifact` quest, set `required_items` to `["ancient_artifact"]`.
+            - Don't place the quest items in hidden items.
         - **Mystic Gem:**
             - Place the `mystic_gem` (type: `healing` with full heal capacity) in a **different location**.
             - For the `find_mystic_gem` quest, set `required_items` to `["mystic_gem"]`.
@@ -305,9 +312,7 @@ def generate_initial_game_state(attempts=3):
         - **Locked Paths:** lock **4 to 6** paths in total across all locations.
         - **Locked Paths:** All paths leading to the final boss location must be **locked**.
         - **Keys Availability:** Provide **more keys** (e.g., 2 times the number of locked paths) to ensure players can progress through the game.
-    - **Include Hidden Items:**
-        - **Quantity:** Add **0 to 2** hidden items per location, with most locations having **0**.
-        - **Placement:** Strategically place hidden items to enhance gameplay and exploration.
+    - **Include Hidden Items:** Keep the hidden items empty for all locations
     - **Logical Location Connections:**
         - **Connectivity:** Ensure that all locations are connected logically, allowing smooth navigation.
         - **Final Boss Location:** Design the final boss location (e.g., `cursed_castle`) to be the **most challenging to reach**, requiring multiple keys or steps.

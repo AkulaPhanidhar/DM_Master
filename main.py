@@ -12,18 +12,28 @@ from ai_interactions import (
 
 use_voice = True
 
-engine = pyttsx3.init()
-engine.setProperty("rate", 180)
-engine.setProperty("volume", 0.8)
+try:
+    engine = pyttsx3.init()
+    engine.setProperty("rate", 180)
+    engine.setProperty("volume", 0.8)
+except Exception as e:
+    print(f"Error initializing the speech engine: {e}")
+    engine = None
+    use_voice = False
 
 def speak(text):
     """
     Prints and optionally speaks the given text.
     """
+    global use_voice
     print(text)
-    if use_voice:
-        engine.say(text)
-        engine.runAndWait()
+    if use_voice and engine is not None:
+        try:
+            engine.say(text)
+            engine.runAndWait()
+        except Exception as e:
+            print(f"Error during speech synthesis: {e}")
+            use_voice = False
 
 def toggle_voice():
     """
@@ -36,26 +46,6 @@ def toggle_voice():
     else:
         use_voice = True
         speak("\nVoice output is now enabled.")
-
-def check_player_hp():
-    """
-    Checks the player's HP and handles game over conditions.
-    """
-    player_hp = game_state["player"].get("hp", 0)
-    if player_hp <= 0:
-        speak("Your HP is too low to continue. You must start a new game.")
-        while True:
-            start_new = input("Would you like to start a new game? (yes/no): ").strip().lower()
-            if start_new == "yes":
-                start_new_game()
-                return True
-            elif start_new == "no":
-                speak("Exiting the game. Thank you for playing!")
-                exit_game()
-                return False
-            else:
-                speak("Invalid choice. Please type 'yes' or 'no'.")
-    return True
 
 def check_quest_completion():
     """
@@ -102,7 +92,7 @@ def check_quest_completion():
     if all_completed:
         print("\n=== Congratulations! You have completed all quests ===")
         speak("Congratulations! You have completed all your quests and mastered the realm.")
-        exit_game()
+        speak("You are a true hero!")
 
 def load_or_initialize_game():
     """
@@ -222,7 +212,7 @@ def describe_location():
         save_game_state(game_state)
 
     print("\n=== Location Description ===")
-    speak(loc_data["generated_description"])
+    print(loc_data["generated_description"])
 
     if loc_data.get("npcs"):
         print("\n=== NPCs Here ===")
@@ -313,15 +303,38 @@ def display_inventory():
             elif item_data["type"] == "quest_item":
                 additional_info = f"(Quest Item) - {description}"
             elif item_data["type"] == "weapon":
-                additional_info = f"(Weapon) - Increases attack by {item_data.get('attack_boost', 0)}"
+                additional_info = f"(Weapon) - Increases attack by {item_data.get('attack_boost', 10)}"
             else:
                 additional_info = f"({item_data['type'].capitalize()}) - {description}"
 
             print(f"- {item_name.replace('_', ' ').title()} x{count} {additional_info}")
 
-def pick_up_item(item_name=None):
+def pick_specific_item_logic(item_name, items, location):
+    """
+    Logic to pick up a specific item, considering the state of NPCs in the location.
+    """
+    restricted_items = ["ancient_artifact"]
+
+    if item_name in restricted_items:
+        location_data = game_state["locations"][location]
+        npcs = location_data.get("npcs", {})
+
+        active_npcs = [npc for npc, data in npcs.items() if data.get("status") != "defeated"]
+
+        if active_npcs:
+            npc_names = ', '.join([npc.replace('_', ' ').title() for npc in active_npcs])
+            speak(f"You cannot pick up the {item_name.replace('_', ' ').title()} until you defeat the following NPCs: {npc_names}.")
+            return
+
+    item = items.pop(item_name)
+    game_state["player"]["inventory"].append({"name": item_name, **item})
+    speak(f"You picked up {item_name.replace('_', ' ').title()}.")
+    save_game_state(game_state)
+
+def pick_specific_item(item_name=None):
     """
     Allows the player to pick up an item from the current location.
+    Prevents picking up certain items until all NPCs in the location are defeated.
     """
     location = game_state["player"]["location"]
     items = game_state["locations"][location].get("items", {})
@@ -332,10 +345,10 @@ def pick_up_item(item_name=None):
 
     if item_name:
         if item_name in items:
-            pick_specific_item(item_name, items, location)
+            pick_specific_item_logic(item_name, items, location)
             check_quest_completion()
         else:
-            print(f"There is no {item_name} here to pick up.")
+            print(f"There is no {item_name.replace('_', ' ').title()} here to pick up.")
     else:
         print("\n=== Select Items to Pick Up ===")
         for idx, item in enumerate(items.keys(), start=1):
@@ -348,38 +361,19 @@ def pick_up_item(item_name=None):
             return
         elif choice.lower() == 'a':
             for item in list(items.keys()):
-                pick_specific_item(item, items, location)
+                pick_specific_item_logic(item, items, location)
             check_quest_completion()
         else:
             try:
                 idx = int(choice) - 1
                 if 0 <= idx < len(items):
                     item_name = list(items.keys())[idx]
-                    pick_specific_item(item_name, items, location)
+                    pick_specific_item_logic(item_name, items, location)
                     check_quest_completion()
                 else:
                     print("Invalid selection.")
             except ValueError:
                 print("Invalid input.")
-
-def pick_specific_item(item_name, items, location):
-    """
-    Picks up a specific item from the location.
-    """
-    if item_name == "ancient_artifact":
-        final_boss = game_state["locations"][location]["npcs"].get("final_boss")
-        if final_boss and final_boss["status"] != "defeated":
-            speak("You cannot pick up the Ancient Artifact without defeating the Final Boss!")
-            return
-
-    if item_name not in items:
-        print(f"No such item '{item_name}' here. Available items: {', '.join(items.keys())}")
-        return
-
-    item = items.pop(item_name)
-    game_state["player"]["inventory"].append({"name": item_name, **item})
-    print(f"You picked up {item_name.replace('_', ' ').title()}.")
-    save_game_state(game_state)
 
 def use_item(item_name):
     """
@@ -390,7 +384,7 @@ def use_item(item_name):
 
     if not item:
         available_items = ', '.join([item["name"] for item in inventory])
-        print(f"You don't have '{item_name}' in your inventory. Available items: {available_items}")
+        print(f"You don't have '{item_name.replace('_', ' ').title()}' in your inventory. Available items: {available_items}")
         return
 
     item_type = item.get("type")
@@ -404,7 +398,7 @@ def use_item(item_name):
     elif item_type == "key":
         speak("You can use keys to unlock doors when you encounter them.")
     else:
-        speak(f"The {item_name} can't be used directly.")
+        speak(f"The {item_name.replace('_', ' ').title()} can't be used directly.")
 
     save_game_state(game_state)
 
@@ -548,7 +542,7 @@ def combat_loop(npc_name):
             critical_hit = roll == 6
             damage = player["attack"] + roll + (5 if critical_hit else 0)
             npc["hp"] -= damage
-            print(f"\nYou rolled a {roll}!")
+            speak(f"\nYou rolled a {roll}!")
             if critical_hit:
                 print("Critical hit!")
             speak(f"You attack {npc_name.replace('_', ' ').title()} for {damage} damage.")
@@ -583,7 +577,7 @@ def combat_loop(npc_name):
             critical_hit = roll == 6
             npc_damage = npc.get("attack", 5) + roll + (5 if critical_hit else 0)
             player["hp"] -= npc_damage
-            print(f"{npc_name.replace('_', ' ').title()} rolled a {roll}!")
+            speak(f"{npc_name.replace('_', ' ').title()} rolled a {roll}!")
             if critical_hit:
                 print("Critical hit!")
             speak(f"{npc_name.replace('_', ' ').title()} attacks you for {npc_damage} damage.")
@@ -809,7 +803,8 @@ def initiate_conversation(npc_name, npc):
     if "conversation_history" not in npc:
         npc["conversation_history"] = []
 
-    print(f"\n=== Current Conversation with {npc_name.replace('_', ' ').title()} ===\n")
+    if has_previous_conversation:
+        print(f"\n=== Current Conversation with {npc_name.replace('_', ' ').title()} ===\n")
     npc_initial_response = generate_npc_response(npc_name, "start")
     speak(f"{npc_name.replace('_', ' ').title()}: {npc_initial_response}")
     npc["conversation_history"].append({"player": "start", "npc": npc_initial_response})
@@ -892,7 +887,7 @@ def drop_item(item_name):
     item = next((item for item in inventory if item["name"] == item_name), None)
 
     if not item:
-        speak(f"You don't have '{item_name}' in your inventory.")
+        speak(f"You don't have '{item_name.replace('_', ' ').title()}' in your inventory.")
         return
 
     inventory.remove(item)
@@ -908,9 +903,7 @@ def start_new_game():
     Starts a new game, resetting the game state.
     """
     global game_state
-    confirm = input(
-        "\nAre you sure you want to start a new game? This will erase your current progress. (yes/no): "
-    ).strip().lower()
+    confirm = input("\nAre you sure you want to start a new game? This will erase your current progress. (yes/no): ").strip().lower()
 
     if confirm == "yes":
         game_state = initialize_game_state()
@@ -936,21 +929,21 @@ def generate_location_image():
     if "generated_image" in loc_data and isinstance(loc_data["generated_image"], dict):
         generated_data = loc_data["generated_image"]
         if "file_path" in generated_data and "url" in generated_data:
-            print(f"Image already generated for {location}:")
+            print(f"Image already generated for {location.replace('_', ' ').title()}:")
             print(f" - Local File: {generated_data['file_path']}")
             print(f" - URL: {generated_data['url']}")
             return
         else:
             print(f"Error: The 'generated_image' field for {location} is invalid. Regenerating...")
 
-    print(f"Generating an image for {location}...")
+    print(f"Generating an image for {location.replace('_', ' ').title()}...")
     description = loc_data.get("generated_description", loc_data["description"])
     generated_data = generate_image_with_deepai(description, location)
     if generated_data:
         loc_data["generated_image"] = generated_data
         game_state["locations"][location] = loc_data
         save_game_state(game_state)
-        print(f"Image generated for {location}:")
+        print(f"Image generated for {location.replace('_', ' ').title()}:")
         print(f" - Local File: {generated_data['file_path']}")
         print(f" - URL: {generated_data['url']}")
     else:
@@ -968,10 +961,59 @@ def display_goal():
     print("\n=== Quest Details ===")
     for quest_name, quest_data in quests.items():
         status = "Completed" if quest_data.get("completed", False) else "Not Completed"
-        print(f"- Quest Name: {quest_name.replace('_', ' ').title()}")
+        print(f"\n- Quest Name: {quest_name.replace('_', ' ').title()}")
         print(f"  Description: {quest_data.get('description', 'No description available.')}")
         print(f"  Status: {status}")
-        print("-" * 40)
+
+        required_items = quest_data.get("required_items", [])
+        required_npcs = quest_data.get("required_npcs", [])
+
+        if required_items:
+            print(f"  Required Items to Complete:")
+            for item in required_items:
+                item_status = "Obtained" if any(
+                    inventory_item["name"] == item for inventory_item in game_state["player"]["inventory"]
+                ) else "Not Obtained"
+                print(f"    - {item.replace('_', ' ').title()} ({item_status})")
+
+        if required_npcs:
+            print(f"  Required NPCs to Defeat:")
+            for npc in required_npcs:
+                npc_defeated = any(
+                    location_data.get("npcs", {}).get(npc, {}).get("status") == "defeated"
+                    for location_data in game_state["locations"].values()
+                )
+                npc_status = "Defeated" if npc_defeated else "Not Defeated"
+                print(f"    - {npc.replace('_', ' ').title()} ({npc_status})")
+
+        print("-" * 60)
+
+def check_game_state_before_start():
+    """
+    Checks the game state before starting the game loop.
+    If the player is dead or all quests are completed, prompt to start a new game.
+    """
+    player = game_state["player"]
+    quests = game_state.get("quests", {})
+
+    if player["hp"] <= 0:
+        print("\nYour character has perished.")
+        start_new = input("Would you like to start a new game? (yes/no): ").strip().lower()
+        if start_new == "yes":
+            start_new_game()
+        else:
+            speak("Exiting the game. Thank you for playing!\n")
+            exit()
+
+    all_completed = all(quest.get("completed", False) for quest in quests.values())
+    if all_completed:
+        print("\nYou have completed all quests.")
+        start_new = input("Would you like to start a new game? (yes/no): ").strip().lower()
+        if start_new == "yes":
+            start_new_game()
+        else:
+            speak("Exiting the game. Thank you for playing!\n")
+            exit()
 
 def exit_game():
     """
@@ -1009,13 +1051,12 @@ def game_loop():
     """
     Main game loop that processes player commands and updates the game state.
     """
+    check_game_state_before_start()
+
     speak("\nWelcome to the AI Dungeon Master Adventure Game!")
     speak("Embark on a journey through dark forests, mystical lakes, and ancient ruins in search of hidden treasures and legendary artifacts.")
     speak("Face challenging enemies, level up your skills, and strategically use items to survive the dangers that await.")
     speak("\nType 'help' to see available commands. Good luck, adventurer!")
-
-    if not check_player_hp():
-        return
 
     while True:
         command = input("\n> ").lower().split()
@@ -1053,7 +1094,7 @@ def game_loop():
             if len(command) > 1:
                 print("Invalid action. Use 'pick' without specifying an item to select items from the menu.")
             else:
-                pick_up_item()
+                pick_specific_item()
         elif action == "use":
             if len(command) > 1:
                 use_item(command[1])
